@@ -18,27 +18,32 @@ const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
 
 let currentSession = null;
-let countdown = 600;  // 10 minutes
-let timerInterval = null;
-
 let localStream = null;
 let peerConnection = null;
 let isAudioEnabled = true;
 let isVideoEnabled = true;
-let peerReady = false;
+let isHost = false;
+let countdown = 1800;
+let timerInterval = null;
 
 const config = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
 
-createBtn.onclick = () => socket.emit("create_session");
+// Session buttons
+createBtn.onclick = () => {
+  isHost = true;
+  socket.emit("create_session");
+};
 
 joinBtn.onclick = () => {
   const code = sessionInput.value.trim().toUpperCase();
   if (!code) return alert("Please enter a session code.");
+  isHost = false;
   socket.emit("join_session", { session_id: code });
 };
 
+// Messaging
 sendMessageBtn.onclick = sendChatMessage;
 messageInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendChatMessage();
@@ -52,6 +57,7 @@ function sendChatMessage() {
   messageInput.value = "";
 }
 
+// File transfer
 sendFileBtn.onclick = () => {
   if (!currentSession) return alert("Not in a session.");
   const file = fileInput.files[0];
@@ -74,6 +80,7 @@ fileInput.onchange = () => {
   fileName.textContent = fileInput.files[0]?.name || "Select file to share";
 };
 
+// Session events
 socket.on("session_created", (sessionId) => {
   sessionInput.value = sessionId;
   addMessage("System", `Session created. Share code: ${sessionId}`);
@@ -83,18 +90,12 @@ socket.on("session_created", (sessionId) => {
 socket.on("session_joined", (sessionId) => {
   addMessage("System", `Joined session: ${sessionId}`);
   startChatUI(sessionId);
+  socket.emit("peer_ready", { session_id: sessionId });
 });
 
+// Signaling
 socket.on("peer_ready", async () => {
-  peerReady = true;
-  if (localStream) startCall();
-});
-
-socket.on("receive_message", (msg) => addMessage("Peer", msg));
-
-socket.on("receive_file", (data) => {
-  const link = `<a href="${data.url}" class="underline text-green-400" target="_blank">${data.filename}</a>`;
-  addMessage("Peer", `Sent file: ${link}`);
+  if (localStream && isHost) startCall(); // Host initiates call
 });
 
 socket.on("signal", async ({ data }) => {
@@ -112,45 +113,36 @@ socket.on("signal", async ({ data }) => {
   }
 });
 
+socket.on("receive_message", (msg) => addMessage("Peer", msg));
+
+socket.on("receive_file", (data) => {
+  const link = `<a href="${data.url}" class="underline text-green-400" target="_blank">${data.filename}</a>`;
+  addMessage("Peer", `Sent file: ${link}`);
+});
+
 socket.on("error", (msg) => alert(msg));
 
+// Chat UI init
 function startChatUI(code) {
   currentSession = code;
   sessionDisplay.textContent = code;
   sessionSetup.classList.add("hidden");
   chatRoom.classList.remove("hidden");
   connectionStatus.textContent = `Connected to session ${code}`;
-  timerInterval = setInterval(updateTimer, 1000);
-  updateTimer();
   document.getElementById("toggleAudioBtn").onclick = toggleAudio;
   document.getElementById("toggleVideoBtn").onclick = toggleVideo;
   document.getElementById("endSessionBtn").onclick = handleEndSession;
+  timerInterval = setInterval(updateTimer, 1000);
+  updateTimer();
   initMedia();
 }
 
-function updateTimer() {
-  const mins = Math.floor(countdown / 60);
-  const secs = countdown % 60;
-  sessionTimer.textContent = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  if (countdown-- <= 0) {
-    clearInterval(timerInterval);
-    endSession();
-  }
-}
-
-function addMessage(sender, msgHTML) {
-  const el = document.createElement("div");
-  el.classList.add("mb-2");
-  el.innerHTML = `<strong>${sender}:</strong> ${msgHTML}`;
-  chatMessages.appendChild(el);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
+// Media setup
 async function initMedia() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     localVideo.srcObject = localStream;
-    if (peerReady) startCall();
+    if (!isHost) return; // Host will call once peer is ready
   } catch (err) {
     connectionStatus.innerHTML = `<span class="text-red-400">Camera/Mic error: ${err.message}</span>`;
   }
@@ -203,6 +195,16 @@ function toggleVideo() {
   document.getElementById("toggleVideoBtn").textContent = isVideoEnabled ? "Hide Video" : "Show Video";
 }
 
+function updateTimer() {
+  const mins = Math.floor(countdown / 60);
+  const secs = countdown % 60;
+  sessionTimer.textContent = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  if (countdown-- <= 0) {
+    clearInterval(timerInterval);
+    endSession();
+  }
+}
+
 function handleEndSession() {
   if (confirm("End this session?")) endSession();
 }
@@ -220,4 +222,12 @@ function endSession() {
   document.getElementById("sessionEnded").classList.remove("hidden");
   connectionStatus.innerHTML = `<i class="fas fa-bolt text-red-500"></i> Session Ended`;
   clearInterval(timerInterval);
+}
+
+function addMessage(sender, msgHTML) {
+  const el = document.createElement("div");
+  el.classList.add("mb-2");
+  el.innerHTML = `<strong>${sender}:</strong> ${msgHTML}`;
+  chatMessages.appendChild(el);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
 }
